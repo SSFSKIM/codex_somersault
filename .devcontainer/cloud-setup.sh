@@ -7,6 +7,7 @@
 # What it provisions:
 #   - native build deps (clang, openssl, pkg-config, libcap, musl) — see .devcontainer/Dockerfile
 #   - rustup; the toolchain VERSION is pinned by codex-rs/rust-toolchain.toml (1.93.0)
+#   - just (command runner; current release — apt's 1.21 predates `set working-directory`)
 #   - cargo-nextest (`just test`) and cargo-insta (TUI snapshot tests)
 #   - uv (required by `just fmt`, which also formats the Python SDK)
 #   - prefetched crate dependencies (`just install` -> cargo fetch)
@@ -41,7 +42,7 @@ else
 fi
 $SUDO apt-get install -y --no-install-recommends \
   build-essential curl git ca-certificates \
-  pkg-config libcap-dev clang musl-tools libssl-dev just \
+  pkg-config libcap-dev clang musl-tools libssl-dev \
   cmake libclang-dev                               # insurance for native/bindgen crates
 $SUDO rm -rf /var/lib/apt/lists/*
 
@@ -53,6 +54,15 @@ fi
 . "$HOME/.cargo/env"
 
 echo "==> [3/4] Workspace test/format tooling"
+# `just` itself: Ubuntu 24.04's apt package is 1.21, too old for this repo's
+# justfile, which uses `set working-directory` (just >= 1.33). Install a current
+# release from crates.io into ~/.cargo/bin (on PATH from the cargo env sourced
+# above). We build from crates.io rather than the just.systems installer so this
+# only depends on the crate registry already required by the steps below.
+if ! command -v just >/dev/null 2>&1 \
+  || [ "$(printf '%s\n1.33.0\n' "$(just --version | awk '{print $2}')" | sort -V | head -n1)" != "1.33.0" ]; then
+  cargo install --locked just
+fi
 cargo install --locked cargo-nextest   # `just test`
 cargo install --locked cargo-insta     # TUI snapshot tests
 curl -LsSf https://astral.sh/uv/install.sh | sh   # required by `just fmt` (Python SDK)
