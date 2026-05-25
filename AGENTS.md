@@ -1,3 +1,10 @@
+<!-- fork-note: stable fork pointer; keep above the upstream heading to avoid merge conflicts -->
+> **This repo is a fork of `openai/codex`.** This `AGENTS.md` is upstream-owned; the conventions
+> below are the canonical Rust rulebook. For **fork-specific** orientation — repo structure
+> (`codex-rs/` is the product, `Claude Code Src/` is a reference, not built), the SQ/EQ architecture
+> and codebase map, and the **upstream-merge workflow** — read [`docs/fork-overview.md`](docs/fork-overview.md).
+> Track upstream: prefer minimal-footprint changes so merges stay cheap.
+
 # Rust/codex-rs
 
 In the codex-rs folder where the rust code lives:
