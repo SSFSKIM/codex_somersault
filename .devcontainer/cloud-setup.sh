@@ -25,9 +25,20 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 echo "==> [1/4] System build dependencies (Ubuntu/Debian)"
 export DEBIAN_FRONTEND=noninteractive
 $SUDO apt-get update
-$SUDO apt-get install -y --no-install-recommends software-properties-common
-$SUDO add-apt-repository --yes universe            # musl-tools & clang live in 'universe'
-$SUDO apt-get update
+
+# musl-tools & clang live in 'universe'. It is enabled by default on most cloud
+# base images; only invoke add-apt-repository when it isn't. We also tolerate a
+# broken add-apt-repository (e.g. a python apt_pkg version mismatch) — if the
+# component is genuinely missing the apt-get install below fails with a clear
+# "Unable to locate package" error.
+if grep -qhrw universe /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
+  echo "    'universe' already enabled; skipping add-apt-repository"
+else
+  $SUDO apt-get install -y --no-install-recommends software-properties-common
+  $SUDO add-apt-repository --yes universe \
+    || echo "    WARN: add-apt-repository failed; relying on existing apt sources"
+  $SUDO apt-get update
+fi
 $SUDO apt-get install -y --no-install-recommends \
   build-essential curl git ca-certificates \
   pkg-config libcap-dev clang musl-tools libssl-dev just \
