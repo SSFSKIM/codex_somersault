@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::HooksToml;
+use crate::lsp_config::LspServerConfig;
 use crate::permissions_toml::PermissionsToml;
 use crate::profile_toml::ConfigProfile;
 use crate::types::AnalyticsConfigToml;
@@ -248,6 +249,13 @@ pub struct ConfigToml {
     // Uses the raw MCP input shape (custom deserialization) rather than `McpServerConfig`.
     #[schemars(schema_with = "crate::schema::mcp_servers_schema")]
     pub mcp_servers: HashMap<String, McpServerConfig>,
+
+    /// Definition for LSP (Language Server Protocol) servers Codex can drive for code
+    /// intelligence. Keyed by a user-chosen name under `[lsp_servers.<name>]`. Unlike
+    /// `mcp_servers`, `LspServerConfig` derives `JsonSchema` directly, so no custom schema fn is
+    /// needed.
+    #[serde(default)]
+    pub lsp_servers: HashMap<String, LspServerConfig>,
 
     /// Preferred backend for storing MCP OAuth credentials.
     /// keyring: Use an OS-specific keyring service.
