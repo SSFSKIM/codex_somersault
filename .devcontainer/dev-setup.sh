@@ -86,21 +86,24 @@ fi
 . "$HOME/.local/bin/env" 2>/dev/null || true
 
 # The repo justfile uses `set working-directory`, which needs just >= 1.33.
-# apt's just is older, so install a modern just to ~/.cargo/bin whenever the
-# repo justfile fails to parse with whatever just is currently on PATH.
+# apt's just is older. Install from crates.io (cargo install) rather than the
+# just.systems script: crates.io is reachable here, but egress allowlists/
+# firewalls often 403 arbitrary install-script domains.
 if ! just --justfile "$REPO_ROOT/justfile" --list >/dev/null 2>&1; then
-  echo "    installing a modern just (apt's is too old for 'set working-directory')"
-  curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh \
-    | bash -s -- --to "$HOME/.cargo/bin"
+  echo "    installing a modern just from crates.io (apt's is too old)"
+  cargo install --locked just
   hash -r 2>/dev/null || true
 fi
 
 echo "==> [4/6] Pinned toolchain + prefetch crate deps + host-arch musl target"
 # `just install` == `rustup show active-toolchain` (installs the pin + components) + `cargo fetch`.
 ( cd "$REPO_ROOT" && just install )
+# musl target is only needed for static/release dist builds — make it non-fatal
+# in case static.rust-lang.org is blocked by an egress allowlist.
+MUSL_MSG="    (musl target add failed — skipping; only needed for static release builds)"
 case "$ARCH" in
-  aarch64) rustup target add aarch64-unknown-linux-musl ;;   # for release/static dist builds
-  x86_64)  rustup target add x86_64-unknown-linux-musl  ;;
+  aarch64) rustup target add aarch64-unknown-linux-musl || echo "$MUSL_MSG" ;;
+  x86_64)  rustup target add x86_64-unknown-linux-musl  || echo "$MUSL_MSG" ;;
   *) echo "    (unknown arch '$ARCH' — skipping musl target)" ;;
 esac
 
