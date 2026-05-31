@@ -219,7 +219,7 @@ impl LspManager {
     }
 
     /// Routes a request by extension, ensures the server is started, and issues it.
-    pub async fn request_value(
+    pub(crate) async fn request_value(
         &self,
         file_path: &Path,
         method: &str,

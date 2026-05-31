@@ -87,8 +87,14 @@ impl LspTransport {
             .kill_on_drop(true);
         let mut child = cmd.spawn()?;
 
-        let stdin = child.stdin.take().expect("piped stdin");
-        let stdout = child.stdout.take().expect("piped stdout");
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| std::io::Error::other("child stdin was not piped"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| std::io::Error::other("child stdout was not piped"))?;
         if let Some(stderr) = child.stderr.take() {
             spawn_stderr_drain(command.to_string(), stderr);
         }
@@ -154,7 +160,10 @@ impl LspTransport {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         {
-            let mut pending = self.pending.lock().unwrap();
+            let mut pending = self
+                .pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             pending.insert(id, tx);
         }
         let frame = encode_frame(&json!({
@@ -164,7 +173,10 @@ impl LspTransport {
             "params": params,
         }));
         if self.outgoing.send(frame).await.is_err() {
-            self.pending.lock().unwrap().remove(&id);
+            self.pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&id);
             return Err(JsonRpcError::Closed);
         }
         match rx.await {
@@ -194,7 +206,7 @@ impl LspTransport {
     pub(crate) fn on_notification(&self, method: &str, handler: NotificationHandler) {
         self.notification_handlers
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(method.to_string(), handler);
     }
 
@@ -202,7 +214,7 @@ impl LspTransport {
     pub(crate) fn on_request(&self, method: &str, responder: RequestResponder) {
         self.request_responders
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(method.to_string(), responder);
     }
 
@@ -215,7 +227,9 @@ impl LspTransport {
         let _ = self.request_value("shutdown", Value::Null).await;
         let _ = self.notify("exit", Value::Null).await;
 
-        if let Some(mut child) = self.child.lock().await.take() {
+        // Drop the lock guard before awaiting (never hold a tokio mutex across `.await`).
+        let child = self.child.lock().await.take();
+        if let Some(mut child) = child {
             // SIGTERM (start_kill) then a bounded wait, then SIGKILL via kill_on_drop on drop.
             let _ = child.start_kill();
             let _ = tokio::time::timeout(std::time::Duration::from_secs(2), child.wait()).await;
@@ -253,11 +267,8 @@ async fn reader_loop<R: AsyncRead + Unpin>(
     request_responders: Responders,
     outgoing: mpsc::Sender<Vec<u8>>,
 ) {
-    loop {
-        let len = match read_content_length(&mut reader).await {
-            Some(len) => len,
-            None => break, // streams closed
-        };
+    // Loop ends when `read_content_length` returns `None` (streams closed).
+    while let Some(len) = read_content_length(&mut reader).await {
         let mut body = vec![0u8; len];
         if reader.read_exact(&mut body).await.is_err() {
             break;
@@ -276,7 +287,9 @@ async fn reader_loop<R: AsyncRead + Unpin>(
         .await;
     }
     // Streams closed: fail all in-flight requests so callers don't hang.
-    let mut pending = pending.lock().unwrap();
+    let mut pending = pending
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     for (_, tx) in pending.drain() {
         let _ = tx.send(Err(JsonRpcError::Closed));
     }
@@ -296,7 +309,10 @@ async fn dispatch_message(
     if !has_method {
         // Response to one of our requests.
         if let Some(id) = id
-            && let Some(tx) = pending.lock().unwrap().remove(&id)
+            && let Some(tx) = pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&id)
         {
             if let Some(err) = message.get("error") {
                 let code = err.get("code").and_then(Value::as_i64).unwrap_or(-32603);
@@ -323,7 +339,11 @@ async fn dispatch_message(
 
     if let Some(id) = id {
         // Server→client request: answer with the registered responder (or null).
-        let responder = request_responders.lock().unwrap().get(&method).cloned();
+        let responder = request_responders
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&method)
+            .cloned();
         let result = responder.map(|r| r(params)).unwrap_or(Value::Null);
         let frame = encode_frame(&json!({
             "jsonrpc": "2.0",
@@ -333,7 +353,11 @@ async fn dispatch_message(
         let _ = outgoing.send(frame).await;
     } else {
         // Server→client notification.
-        let handler = notification_handlers.lock().unwrap().get(&method).cloned();
+        let handler = notification_handlers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&method)
+            .cloned();
         if let Some(handler) = handler {
             handler(params);
         }

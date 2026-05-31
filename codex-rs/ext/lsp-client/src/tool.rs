@@ -99,7 +99,7 @@ impl ToolExecutor<ToolCall> for LspTool {
             strict: false,
             defer_loading: None,
             parameters: parse_tool_input_schema(&input_schema_for::<LspToolInput>())
-                .expect("LspToolInput schema should parse"),
+                .unwrap_or_else(|err| panic!("LspToolInput schema should parse: {err}")),
             output_schema: None,
         };
         ToolSpec::Namespace(ResponsesApiNamespace {

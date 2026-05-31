@@ -14,8 +14,8 @@ pub(crate) fn input_schema_for<T: JsonSchema>() -> Value {
         })
         .into_generator()
         .into_root_schema_for::<T>();
-    let schema_value =
-        serde_json::to_value(schema).expect("generated tool schema should serialize");
+    let schema_value = serde_json::to_value(schema)
+        .unwrap_or_else(|err| panic!("generated tool schema should serialize: {err}"));
     let Value::Object(mut schema_object) = schema_value else {
         unreachable!("root tool schema must be an object");
     };

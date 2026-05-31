@@ -100,7 +100,7 @@ impl LspServerInstance {
     pub(crate) fn on_notification(&self, method: &str, handler: NotificationHandler) {
         self.notification_handlers
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(method.to_string(), handler);
     }
 
@@ -142,7 +142,7 @@ impl LspServerInstance {
                 let n = params
                     .get("items")
                     .and_then(Value::as_array)
-                    .map(|a| a.len())
+                    .map(Vec::len)
                     .unwrap_or(0);
                 Value::Array(vec![Value::Null; n])
             }),
@@ -150,7 +150,10 @@ impl LspServerInstance {
         // Re-apply previously registered notification handlers (e.g. publishDiagnostics). The lock
         // is held only across synchronous `transport.on_notification` calls (no await inside).
         {
-            let handlers = self.notification_handlers.lock().unwrap();
+            let handlers = self
+                .notification_handlers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             for (method, handler) in handlers.iter() {
                 transport.on_notification(method, handler.clone());
             }
@@ -220,7 +223,9 @@ impl LspServerInstance {
     /// Stops the server: shutdown request + exit notification + kill.
     pub(crate) async fn stop(&self) {
         *self.state.lock().await = LspServerState::Stopping;
-        if let Some(transport) = self.transport.lock().await.take() {
+        // Drop the lock guard before awaiting shutdown (no tokio mutex held across `.await`).
+        let transport = self.transport.lock().await.take();
+        if let Some(transport) = transport {
             transport.shutdown().await;
         }
         *self.capabilities.lock().await = None;

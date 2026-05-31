@@ -104,7 +104,8 @@ impl Default for DiagnosticRegistry {
 
 impl DiagnosticRegistry {
     pub fn new() -> Self {
-        let cap = NonZeroUsize::new(MAX_DELIVERED_FILES).expect("non-zero LRU capacity");
+        // MAX_DELIVERED_FILES is a non-zero constant; fall back to 1 only to avoid `unwrap`.
+        let cap = NonZeroUsize::new(MAX_DELIVERED_FILES).unwrap_or(NonZeroUsize::MIN);
         Self {
             pending: Mutex::new(HashMap::new()),
             delivered: Mutex::new(LruCache::new(cap)),
@@ -123,7 +124,7 @@ impl DiagnosticRegistry {
         }
         self.pending
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(Uuid::new_v4(), PendingDiagnostic { files });
     }
 
@@ -131,7 +132,10 @@ impl DiagnosticRegistry {
     /// within-batch + cross-turn dedup, severity sort (errors first), per-file cap then total cap.
     pub fn check_for_diagnostics(&self) -> Vec<DiagnosticFile> {
         let drained: Vec<PendingDiagnostic> = {
-            let mut pending = self.pending.lock().unwrap();
+            let mut pending = self
+                .pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             pending.drain().map(|(_, v)| v).collect()
         };
 
@@ -148,7 +152,10 @@ impl DiagnosticRegistry {
             }
         }
 
-        let mut delivered = self.delivered.lock().unwrap();
+        let mut delivered = self
+            .delivered
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut result: Vec<DiagnosticFile> = Vec::new();
         let mut total = 0usize;
 
@@ -173,7 +180,7 @@ impl DiagnosticRegistry {
             }
 
             // Severity sort (errors first), then per-file cap.
-            diags.sort_by(|a, b| a.severity.cmp(&b.severity));
+            diags.sort_by_key(|d| d.severity);
             diags.truncate(MAX_DIAGNOSTICS_PER_FILE);
 
             // Apply the remaining total budget.
@@ -200,7 +207,10 @@ impl DiagnosticRegistry {
     /// Forgets the delivered keys for a URI so its diagnostics will be re-surfaced after the file
     /// changes (called from the doc-sync path before `didChange`).
     pub fn clear_delivered_for_file(&self, file_uri: &str) {
-        self.delivered.lock().unwrap().pop(file_uri);
+        self.delivered
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pop(file_uri);
     }
 }
 

@@ -135,7 +135,7 @@ async fn answers_server_to_client_requests_with_a_responder() {
             let items = params
                 .get("items")
                 .and_then(Value::as_array)
-                .map(|a| a.len())
+                .map(Vec::len)
                 .unwrap_or(0);
             Value::Array(vec![Value::Null; items])
         }),
