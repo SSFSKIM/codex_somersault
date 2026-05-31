@@ -52,9 +52,15 @@ echo "==> Host: ${ARCH}, ${CORES} cores, ${RAM_GB}GB RAM -> CARGO_BUILD_JOBS=${J
 echo "==> [1/6] System build dependencies (Ubuntu/Debian)"
 export DEBIAN_FRONTEND=noninteractive
 $SUDO apt-get update
-$SUDO apt-get install -y --no-install-recommends software-properties-common
-$SUDO add-apt-repository --yes universe            # musl-tools & clang live in 'universe'
-$SUDO apt-get update
+# 'universe' (musl-tools, clang, mold) is already enabled on most dev images.
+# Only try to add it when missing, and never let a broken add-apt-repository
+# (e.g. apt_pkg/python mismatch from extra PPAs) abort setup.
+if ! apt-cache policy 2>/dev/null | grep -qi universe; then
+  $SUDO apt-get install -y --no-install-recommends software-properties-common || true
+  $SUDO add-apt-repository --yes universe \
+    || echo "    add-apt-repository unavailable; assuming universe is already enabled"
+  $SUDO apt-get update || true
+fi
 # cmake/libclang-dev: bindgen/native-crate insurance; mold: fast linker (24.04 universe)
 $SUDO apt-get install -y --no-install-recommends \
   build-essential curl git ca-certificates \
