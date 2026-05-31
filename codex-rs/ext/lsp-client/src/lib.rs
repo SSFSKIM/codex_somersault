@@ -18,6 +18,8 @@ mod tool;
 mod transport;
 
 #[cfg(test)]
+mod smoke_tests;
+#[cfg(test)]
 mod test_support;
 
 pub use extension::install;
