@@ -10,7 +10,11 @@ fn parses_location_array_and_location_link() {
     });
     assert_eq!(
         parse_locations(&single),
-        vec![Location { uri: "file:///a.rs".into(), line: 4, character: 2 }]
+        vec![Location {
+            uri: "file:///a.rs".into(),
+            line: 4,
+            character: 2
+        }]
     );
 
     let array = json!([
@@ -26,7 +30,11 @@ fn parses_location_array_and_location_link() {
 
 #[test]
 fn formats_locations_one_based() {
-    let locs = vec![Location { uri: "file:///a.rs".into(), line: 4, character: 2 }];
+    let locs = vec![Location {
+        uri: "file:///a.rs".into(),
+        line: 4,
+        character: 2,
+    }];
     // 0-based (4, 2) renders 1-based (5, 3).
     assert!(format_locations(&locs, "definition").contains("file:///a.rs:5:3"));
     assert_eq!(format_locations(&[], "reference"), "No reference found.");
@@ -39,7 +47,10 @@ fn formats_hover_variants() {
         "`fn foo()`"
     );
     assert_eq!(format_hover(&json!({"contents": "plain"})), "plain");
-    assert_eq!(format_hover(&json!({"contents": ["a", {"value": "b"}]})), "a\nb");
+    assert_eq!(
+        format_hover(&json!({"contents": ["a", {"value": "b"}]})),
+        "a\nb"
+    );
     assert_eq!(format_hover(&json!({})), "No hover information.");
 }
 

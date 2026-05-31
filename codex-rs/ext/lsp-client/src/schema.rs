@@ -21,7 +21,14 @@ pub(crate) fn input_schema_for<T: JsonSchema>() -> Value {
     };
 
     let mut tool_schema = Map::new();
-    for key in ["properties", "required", "type", "additionalProperties", "$defs", "definitions"] {
+    for key in [
+        "properties",
+        "required",
+        "type",
+        "additionalProperties",
+        "$defs",
+        "definitions",
+    ] {
         if let Some(value) = schema_object.remove(key) {
             tool_schema.insert(key.to_string(), value);
         }

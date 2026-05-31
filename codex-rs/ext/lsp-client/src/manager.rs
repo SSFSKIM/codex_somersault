@@ -268,7 +268,11 @@ impl LspManager {
     /// Resolves a possibly-relative tool path against the session cwd.
     pub fn resolve_path(&self, raw: &str) -> PathBuf {
         let path = PathBuf::from(raw);
-        if path.is_absolute() { path } else { self.cwd.join(path) }
+        if path.is_absolute() {
+            path
+        } else {
+            self.cwd.join(path)
+        }
     }
 
     /// Test seam: builds a manager from already-constructed (and typically mock-connected)

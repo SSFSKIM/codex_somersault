@@ -9,6 +9,7 @@
 
 mod config;
 mod diagnostics;
+mod extension;
 mod format;
 mod instance;
 mod manager;
@@ -19,19 +20,6 @@ mod transport;
 #[cfg(test)]
 mod test_support;
 
+pub use extension::install;
 pub use manager::LspManager;
 pub use manager::ManagerDocSync;
-
-use codex_core::config::Config;
-use codex_extension_api::ExtensionRegistryBuilder;
-
-/// Registers the LSP extension on the host's extension registry.
-///
-/// This is the single install seam called from `app-server/src/extensions.rs`. It reads the
-/// `[lsp_servers]` config at thread start and, for interactive sessions, builds a thread-scoped
-/// `LspManager` that the contributed `lsp/query` tool and the apply-patch doc-sync hook share.
-///
-/// The body is filled in once the extension contributors land (build sequence step 9); the
-/// signature is intentionally argument-free because everything it needs is read from `Config`
-/// in `on_thread_start`.
-pub fn install(_registry: &mut ExtensionRegistryBuilder<Config>) {}

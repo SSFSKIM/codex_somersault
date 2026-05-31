@@ -6,6 +6,30 @@
 
 use serde_json::Value;
 
+use crate::diagnostics::DiagnosticFile;
+
+/// Renders pushed diagnostics into a developer-policy prompt fragment body. Positions are 1-based.
+pub(crate) fn format_diagnostics(files: &[DiagnosticFile]) -> String {
+    let mut out = String::from("Language server diagnostics for recently edited files:\n");
+    for file in files {
+        out.push_str(&format!("{}\n", file.uri));
+        for d in &file.diagnostics {
+            let pos = format!("{}:{}", d.range.start.line + 1, d.range.start.character + 1);
+            let source = d
+                .source
+                .as_deref()
+                .map(|s| format!(" ({s})"))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "  [{}] {pos} — {}{source}\n",
+                d.severity.label(),
+                d.message
+            ));
+        }
+    }
+    out.trim_end().to_string()
+}
+
 /// A source location flattened from `Location` / `LocationLink` for filtering and display.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Location {
@@ -38,18 +62,30 @@ fn parse_one_location(value: &Value) -> Option<Location> {
     let (uri, range) = if let Some(uri) = value.get("targetUri").and_then(Value::as_str) {
         (uri, value.get("targetRange"))
     } else {
-        (value.get("uri").and_then(Value::as_str)?, value.get("range"))
+        (
+            value.get("uri").and_then(Value::as_str)?,
+            value.get("range"),
+        )
     };
     let (line, character) = range_start(range);
-    Some(Location { uri: uri.to_string(), line, character })
+    Some(Location {
+        uri: uri.to_string(),
+        line,
+        character,
+    })
 }
 
 /// Extracts the 0-based `(line, character)` of a range's start, defaulting to `(0, 0)`.
 fn range_start(range: Option<&Value>) -> (u32, u32) {
     let start = range.and_then(|r| r.get("start"));
-    let line = start.and_then(|s| s.get("line")).and_then(Value::as_u64).unwrap_or(0) as u32;
-    let character =
-        start.and_then(|s| s.get("character")).and_then(Value::as_u64).unwrap_or(0) as u32;
+    let line = start
+        .and_then(|s| s.get("line"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32;
+    let character = start
+        .and_then(|s| s.get("character"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32;
     (line, character)
 }
 
@@ -82,9 +118,11 @@ pub(crate) fn format_hover(value: &Value) -> String {
 fn hover_contents_to_string(contents: &Value) -> String {
     match contents {
         Value::String(s) => s.clone(),
-        Value::Array(items) => {
-            items.iter().map(hover_contents_to_string).collect::<Vec<_>>().join("\n")
-        }
+        Value::Array(items) => items
+            .iter()
+            .map(hover_contents_to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
         Value::Object(map) => {
             // MarkupContent { kind, value } or MarkedString { language, value }.
             if let Some(Value::String(v)) = map.get("value") {
@@ -114,14 +152,21 @@ pub(crate) fn format_document_symbols(value: &Value) -> String {
 }
 
 fn format_symbol(item: &Value, depth: usize, out: &mut String) {
-    let name = item.get("name").and_then(Value::as_str).unwrap_or("<anonymous>");
+    let name = item
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("<anonymous>");
     let kind = symbol_kind_name(item.get("kind").and_then(Value::as_u64));
     // DocumentSymbol has `range`; SymbolInformation has `location.range`.
     let range = item
         .get("range")
         .or_else(|| item.get("location").and_then(|l| l.get("range")));
     let (line, _) = range_start(range);
-    out.push_str(&format!("{}{kind} {name} (line {})\n", "  ".repeat(depth), line + 1));
+    out.push_str(&format!(
+        "{}{kind} {name} (line {})\n",
+        "  ".repeat(depth),
+        line + 1
+    ));
     if let Some(children) = item.get("children").and_then(Value::as_array) {
         for child in children {
             format_symbol(child, depth + 1, out);
@@ -139,7 +184,10 @@ pub(crate) fn format_workspace_symbols(value: &Value) -> String {
     }
     let mut out = format!("{} symbol(s):\n", items.len());
     for item in items {
-        let name = item.get("name").and_then(Value::as_str).unwrap_or("<anonymous>");
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("<anonymous>");
         let kind = symbol_kind_name(item.get("kind").and_then(Value::as_u64));
         let loc = item
             .get("location")
@@ -193,7 +241,10 @@ fn format_calls(value: &Value, item_key: &str, label: &str) -> String {
 }
 
 fn call_hierarchy_item_line(item: &Value) -> String {
-    let name = item.get("name").and_then(Value::as_str).unwrap_or("<anonymous>");
+    let name = item
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("<anonymous>");
     let kind = symbol_kind_name(item.get("kind").and_then(Value::as_u64));
     let uri = item.get("uri").and_then(Value::as_str).unwrap_or("");
     let (line, _) = range_start(item.get("range"));

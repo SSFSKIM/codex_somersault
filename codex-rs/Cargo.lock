@@ -1930,6 +1930,7 @@ dependencies = [
  "codex-hooks",
  "codex-image-generation-extension",
  "codex-login",
+ "codex-lsp",
  "codex-mcp",
  "codex-memories-extension",
  "codex-memories-write",

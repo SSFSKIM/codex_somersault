@@ -141,17 +141,33 @@ impl LspTool {
         let formatted = match input.operation {
             LspOperation::Hover => {
                 let v = self
-                    .request(&path, "textDocument/hover", json!({"textDocument": text_document, "position": position}))
+                    .request(
+                        &path,
+                        "textDocument/hover",
+                        json!({"textDocument": text_document, "position": position}),
+                    )
                     .await?;
                 format::format_hover(&v)
             }
             LspOperation::GoToDefinition => {
-                self.locations(&path, "textDocument/definition", &text_document, &position, "definition")
-                    .await?
+                self.locations(
+                    &path,
+                    "textDocument/definition",
+                    &text_document,
+                    &position,
+                    "definition",
+                )
+                .await?
             }
             LspOperation::GoToImplementation => {
-                self.locations(&path, "textDocument/implementation", &text_document, &position, "implementation")
-                    .await?
+                self.locations(
+                    &path,
+                    "textDocument/implementation",
+                    &text_document,
+                    &position,
+                    "implementation",
+                )
+                .await?
             }
             LspOperation::FindReferences => {
                 let params = json!({
@@ -159,32 +175,46 @@ impl LspTool {
                     "position": position,
                     "context": {"includeDeclaration": true},
                 });
-                let v = self.request(&path, "textDocument/references", params).await?;
+                let v = self
+                    .request(&path, "textDocument/references", params)
+                    .await?;
                 let locations = self.filter_ignored(format::parse_locations(&v)).await;
                 format::format_locations(&locations, "reference")
             }
             LspOperation::DocumentSymbol => {
                 let v = self
-                    .request(&path, "textDocument/documentSymbol", json!({"textDocument": text_document}))
+                    .request(
+                        &path,
+                        "textDocument/documentSymbol",
+                        json!({"textDocument": text_document}),
+                    )
                     .await?;
                 format::format_document_symbols(&v)
             }
             LspOperation::WorkspaceSymbol => {
                 // v1 ride-along: query all symbols (the single-tool input carries no query string).
-                let v = self.request(&path, "workspace/symbol", json!({"query": ""})).await?;
+                let v = self
+                    .request(&path, "workspace/symbol", json!({"query": ""}))
+                    .await?;
                 format::format_workspace_symbols(&v)
             }
             LspOperation::PrepareCallHierarchy => {
                 let v = self
-                    .request(&path, "textDocument/prepareCallHierarchy", json!({"textDocument": text_document, "position": position}))
+                    .request(
+                        &path,
+                        "textDocument/prepareCallHierarchy",
+                        json!({"textDocument": text_document, "position": position}),
+                    )
                     .await?;
                 format::format_call_hierarchy_items(&v)
             }
             LspOperation::IncomingCalls => {
-                self.call_hierarchy(&path, &text_document, &position, CallDirection::Incoming).await?
+                self.call_hierarchy(&path, &text_document, &position, CallDirection::Incoming)
+                    .await?
             }
             LspOperation::OutgoingCalls => {
-                self.call_hierarchy(&path, &text_document, &position, CallDirection::Outgoing).await?
+                self.call_hierarchy(&path, &text_document, &position, CallDirection::Outgoing)
+                    .await?
             }
         };
 
@@ -220,9 +250,9 @@ impl LspTool {
     ) -> Result<Value, FunctionCallError> {
         match self.manager.request_value(path, method, params).await {
             Some(Ok(value)) => Ok(value),
-            Some(Err(err)) => {
-                Err(FunctionCallError::RespondToModel(format!("lsp request `{method}` failed: {err}")))
-            }
+            Some(Err(err)) => Err(FunctionCallError::RespondToModel(format!(
+                "lsp request `{method}` failed: {err}"
+            ))),
             None => Err(FunctionCallError::RespondToModel(format!(
                 "no language server is configured for {}",
                 path.display()
@@ -239,7 +269,11 @@ impl LspTool {
         label: &str,
     ) -> Result<String, FunctionCallError> {
         let v = self
-            .request(path, method, json!({"textDocument": text_document, "position": position}))
+            .request(
+                path,
+                method,
+                json!({"textDocument": text_document, "position": position}),
+            )
             .await?;
         let locations = self.filter_ignored(format::parse_locations(&v)).await;
         Ok(format::format_locations(&locations, label))
@@ -254,7 +288,11 @@ impl LspTool {
         direction: CallDirection,
     ) -> Result<String, FunctionCallError> {
         let items = self
-            .request(path, "textDocument/prepareCallHierarchy", json!({"textDocument": text_document, "position": position}))
+            .request(
+                path,
+                "textDocument/prepareCallHierarchy",
+                json!({"textDocument": text_document, "position": position}),
+            )
             .await?;
         let Some(first) = items.as_array().and_then(|a| a.first()).cloned() else {
             return Ok("No call hierarchy items found.".to_string());

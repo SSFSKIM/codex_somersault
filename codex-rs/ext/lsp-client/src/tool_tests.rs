@@ -44,7 +44,11 @@ async fn tool_with_mock(
         answer_handshake(&mut reader, &mut writer).await;
         while let Some(frame) = read_frame(&mut reader).await {
             let id = frame.get("id").cloned();
-            let method = frame.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
+            let method = frame
+                .get("method")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string();
             match method.as_str() {
                 "textDocument/hover" => {
                     *captured_position.lock().unwrap() = Some(frame["params"]["position"].clone());
@@ -67,7 +71,11 @@ async fn tool_with_mock(
                 }
                 _ => {
                     if let Some(id) = id {
-                        write_frame(&mut writer, &serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})).await;
+                        write_frame(
+                            &mut writer,
+                            &serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null}),
+                        )
+                        .await;
                     }
                 }
             }
