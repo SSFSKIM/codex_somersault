@@ -85,6 +85,16 @@ fi
 # shellcheck disable=SC1091
 . "$HOME/.local/bin/env" 2>/dev/null || true
 
+# The repo justfile uses `set working-directory`, which needs just >= 1.33.
+# apt's just is older, so install a modern just to ~/.cargo/bin whenever the
+# repo justfile fails to parse with whatever just is currently on PATH.
+if ! just --justfile "$REPO_ROOT/justfile" --list >/dev/null 2>&1; then
+  echo "    installing a modern just (apt's is too old for 'set working-directory')"
+  curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh \
+    | bash -s -- --to "$HOME/.cargo/bin"
+  hash -r 2>/dev/null || true
+fi
+
 echo "==> [4/6] Pinned toolchain + prefetch crate deps + host-arch musl target"
 # `just install` == `rustup show active-toolchain` (installs the pin + components) + `cargo fetch`.
 ( cd "$REPO_ROOT" && just install )
@@ -152,6 +162,7 @@ fi
 echo "==> [6/6] Verify"
 rustc --version
 cargo --version
+just --version 2>/dev/null || true
 cargo nextest --version 2>/dev/null || true
 mold --version 2>/dev/null | head -1 || true
 echo "--- memory ---"; free -h 2>/dev/null | sed -n '1,3p'; swapon --show 2>/dev/null || true
