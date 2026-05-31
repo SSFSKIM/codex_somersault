@@ -41,7 +41,6 @@ pub struct LspManager {
     /// `file://` URI → server name, deduplicating `didOpen`.
     opened_files: Mutex<HashMap<String, String>>,
     diagnostics: Arc<DiagnosticRegistry>,
-    #[allow(dead_code)]
     cwd: PathBuf,
 }
 
@@ -260,6 +259,18 @@ impl LspManager {
         self.languages.get(&ext).cloned()
     }
 
+    /// The session working directory, used to resolve relative tool paths and as the git root for
+    /// ignore filtering.
+    pub fn cwd(&self) -> &Path {
+        &self.cwd
+    }
+
+    /// Resolves a possibly-relative tool path against the session cwd.
+    pub fn resolve_path(&self, raw: &str) -> PathBuf {
+        let path = PathBuf::from(raw);
+        if path.is_absolute() { path } else { self.cwd.join(path) }
+    }
+
     /// Test seam: builds a manager from already-constructed (and typically mock-connected)
     /// instances and explicit routing maps, bypassing config resolution and process spawning.
     #[cfg(test)]
@@ -267,6 +278,7 @@ impl LspManager {
         servers: HashMap<String, Arc<LspServerInstance>>,
         extension_map: HashMap<String, String>,
         languages: HashMap<String, String>,
+        cwd: PathBuf,
     ) -> Arc<Self> {
         let manager = Self {
             servers,
@@ -274,7 +286,7 @@ impl LspManager {
             languages,
             opened_files: Mutex::new(HashMap::new()),
             diagnostics: Arc::new(DiagnosticRegistry::new()),
-            cwd: PathBuf::from("/work"),
+            cwd,
         };
         manager.register_diagnostic_handlers();
         Arc::new(manager)

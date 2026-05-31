@@ -1,0 +1,30 @@
+//! Generates a Codex-compatible JSON input schema from a `schemars`-derived type, mirroring
+//! `ext/memories/src/schema.rs` (inline subschemas, only the tool-relevant top-level keys).
+
+use schemars::JsonSchema;
+use schemars::r#gen::SchemaSettings;
+use serde_json::Map;
+use serde_json::Value;
+
+pub(crate) fn input_schema_for<T: JsonSchema>() -> Value {
+    let schema = SchemaSettings::draft2019_09()
+        .with(|settings| {
+            settings.inline_subschemas = true;
+            settings.option_add_null_type = false;
+        })
+        .into_generator()
+        .into_root_schema_for::<T>();
+    let schema_value =
+        serde_json::to_value(schema).expect("generated tool schema should serialize");
+    let Value::Object(mut schema_object) = schema_value else {
+        unreachable!("root tool schema must be an object");
+    };
+
+    let mut tool_schema = Map::new();
+    for key in ["properties", "required", "type", "additionalProperties", "$defs", "definitions"] {
+        if let Some(value) = schema_object.remove(key) {
+            tool_schema.insert(key.to_string(), value);
+        }
+    }
+    Value::Object(tool_schema)
+}

@@ -70,6 +70,7 @@ async fn open_then_update_emits_didchange_then_didsave() {
         HashMap::from([("rust".to_string(), instance)]),
         HashMap::from([(".rs".to_string(), "rust".to_string())]),
         HashMap::from([(".rs".to_string(), "rust".to_string())]),
+        std::path::PathBuf::from("/work"),
     );
 
     let path = Path::new("/work/a.rs");
@@ -100,6 +101,7 @@ async fn change_on_unopened_file_falls_through_to_open() {
         HashMap::from([("rust".to_string(), instance)]),
         HashMap::from([(".rs".to_string(), "rust".to_string())]),
         HashMap::from([(".rs".to_string(), "rust".to_string())]),
+        std::path::PathBuf::from("/work"),
     );
 
     manager

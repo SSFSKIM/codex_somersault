@@ -9,8 +9,11 @@
 
 mod config;
 mod diagnostics;
+mod format;
 mod instance;
 mod manager;
+mod schema;
+mod tool;
 mod transport;
 
 #[cfg(test)]
