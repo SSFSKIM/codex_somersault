@@ -47,6 +47,7 @@ members = [
     "ext/goal",
     "ext/guardian",
     "ext/image-generation",
+    "ext/lsp-client",
     "ext/memories",
     "ext/web-search",
     "external-agent-migration",
@@ -180,6 +181,7 @@ codex-keyring-store = { path = "keyring-store" }
 codex-linux-sandbox = { path = "linux-sandbox" }
 codex-lmstudio = { path = "lmstudio" }
 codex-login = { path = "login" }
+codex-lsp = { path = "ext/lsp-client" }
 codex-message-history = { path = "message-history" }
 codex-memories-extension = { path = "ext/memories" }
 codex-web-search-extension = { path = "ext/web-search" }
