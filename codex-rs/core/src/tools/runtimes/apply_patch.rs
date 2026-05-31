@@ -221,7 +221,7 @@ impl ToolRuntime<ApplyPatchRequest, ApplyPatchRuntimeOutput> for ApplyPatchRunti
         &mut self,
         req: &ApplyPatchRequest,
         attempt: &SandboxAttempt<'_>,
-        _ctx: &ToolCtx,
+        ctx: &ToolCtx,
     ) -> Result<ApplyPatchRuntimeOutput, ToolError> {
         let started_at = Instant::now();
         let fs = req.turn_environment.environment.get_filesystem();
@@ -245,7 +245,14 @@ impl ToolRuntime<ApplyPatchRequest, ApplyPatchRuntimeOutput> for ApplyPatchRunti
             Ok(delta) => delta,
             Err(failure) => failure.into_parts().1,
         };
+        // Forward the changes committed by this patch to the optional LSP doc-sync seam (no-op
+        // when no LSP extension is active). Captured before `append` consumes `delta`.
+        let committed_changes = delta.changes().to_vec();
         self.committed_delta.append(delta);
+        crate::lsp_sync::notify_if_present(
+            &ctx.session.services.thread_extension_data,
+            &committed_changes,
+        );
         let output = ExecToolCallOutput {
             exit_code,
             stdout: StreamOutput::new(stdout.clone()),

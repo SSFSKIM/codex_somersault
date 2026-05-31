@@ -1,8 +1,13 @@
+mod apply_patch_doc_sync;
 mod capabilities;
 mod contributors;
 mod registry;
 mod state;
 
+pub use apply_patch_doc_sync::ApplyPatchDocSync;
+pub use apply_patch_doc_sync::ApplyPatchDocSyncHandle;
+pub use apply_patch_doc_sync::FileChange;
+pub use apply_patch_doc_sync::FileChangeKind;
 pub use capabilities::AgentSpawnFuture;
 pub use capabilities::AgentSpawner;
 pub use capabilities::ExtensionEventSink;
