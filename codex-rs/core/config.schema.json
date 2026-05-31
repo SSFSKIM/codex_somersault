@@ -1177,6 +1177,67 @@
       ],
       "description": "One action binding value in config.\n\nThis accepts either:\n\n1. A single key spec string (`\"ctrl-a\"`). 2. A list of key spec strings (`[\"ctrl-a\", \"alt-a\"]`).\n\nAn empty list explicitly unbinds the action in that scope. Because an explicit empty list is still a configured value, runtime resolution must not fall through to global or built-in defaults for that action."
     },
+    "LspServerConfig": {
+      "additionalProperties": false,
+      "description": "One configured language server, keyed by name under `[lsp_servers.<name>]`.\n\nUnknown fields are rejected so that not-yet-implemented knobs (`shutdown_timeout_ms`, `restart_on_crash`) and typos surface as config errors rather than being silently ignored.",
+      "properties": {
+        "args": {
+          "default": [],
+          "description": "Arguments passed to the executable (e.g. `[\"--stdio\"]`).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "command": {
+          "description": "Executable to spawn (e.g. `\"rust-analyzer\"`, `\"typescript-language-server\"`).",
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Extra environment variables for the spawned server process.",
+          "type": "object"
+        },
+        "extension_to_language": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "REQUIRED, non-empty: maps a file extension (with leading dot, e.g. `\".ts\"`) to the LSP language id (e.g. `\"typescript\"`). Extensions are lowercased when the runtime view is built.",
+          "type": "object"
+        },
+        "initialization_options": {
+          "default": null,
+          "description": "Forwarded verbatim as `initialize.initializationOptions`."
+        },
+        "max_restarts": {
+          "default": 3,
+          "description": "Crash-recovery restart cap before the server is left in an error state. Defaults to 3.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "startup_timeout_ms": {
+          "default": null,
+          "description": "Maximum time to wait for `initialize`. No timeout when absent (matches the TS default).",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "workspace_folder": {
+          "default": null,
+          "description": "Workspace root sent to the server. Defaults to the session cwd when absent.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command",
+        "extension_to_language"
+      ],
+      "type": "object"
+    },
     "MarketplaceConfig": {
       "additionalProperties": false,
       "properties": {
@@ -4850,6 +4911,14 @@
         }
       ],
       "description": "Directory where Codex writes log files. Setting this value explicitly also enables the TUI text log in this directory. Defaults to `$CODEX_HOME/log`."
+    },
+    "lsp_servers": {
+      "additionalProperties": {
+        "$ref": "#/definitions/LspServerConfig"
+      },
+      "default": {},
+      "description": "Definition for LSP (Language Server Protocol) servers Codex can drive for code intelligence. Keyed by a user-chosen name under `[lsp_servers.<name>]`. Unlike `mcp_servers`, `LspServerConfig` derives `JsonSchema` directly, so no custom schema fn is needed.",
+      "type": "object"
     },
     "marketplaces": {
       "additionalProperties": {
