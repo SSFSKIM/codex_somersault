@@ -73,7 +73,8 @@ if ! command -v rustup >/dev/null 2>&1; then
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 fi
 # shellcheck disable=SC1091
-. "$HOME/.cargo/env"
+. "$HOME/.cargo/env" 2>/dev/null || true   # no-op if rust is installed system-wide (already on PATH)
+command -v cargo >/dev/null 2>&1 || { echo "cargo not on PATH after rustup setup"; exit 1; }
 
 echo "==> [3/6] Workspace test/format tooling (skipped if already present)"
 command -v cargo-nextest >/dev/null 2>&1 || cargo install --locked cargo-nextest
