@@ -58,6 +58,30 @@ fn test_absolute_path() -> AbsolutePathBuf {
 }
 
 #[test]
+fn thread_sources_round_trip_as_scalar_labels() {
+    for (source, label) in [
+        (ThreadSource::User, "user"),
+        (ThreadSource::Subagent, "subagent"),
+        (
+            ThreadSource::Feature("automation".to_string()),
+            "automation",
+        ),
+        (ThreadSource::MemoryConsolidation, "memory_consolidation"),
+    ] {
+        let value = serde_json::to_value(&source).expect("serialize thread source");
+
+        assert_eq!(value, json!(label));
+        assert_eq!(
+            serde_json::from_value::<ThreadSource>(value).expect("deserialize thread source"),
+            source
+        );
+
+        let core_source: codex_protocol::protocol::ThreadSource = source.clone().into();
+        assert_eq!(ThreadSource::from(core_source), source);
+    }
+}
+
+#[test]
 fn approvals_reviewer_serializes_auto_review_and_accepts_legacy_guardian_subagent() {
     assert_eq!(
         serde_json::to_string(&ApprovalsReviewer::User).expect("serialize reviewer"),
@@ -65,7 +89,7 @@ fn approvals_reviewer_serializes_auto_review_and_accepts_legacy_guardian_subagen
     );
     assert_eq!(
         serde_json::to_string(&ApprovalsReviewer::AutoReview).expect("serialize reviewer"),
-        "\"guardian_subagent\""
+        "\"auto_review\""
     );
 
     for value in ["user", "auto_review", "guardian_subagent"] {
@@ -142,6 +166,7 @@ fn thread_resume_response_round_trips_initial_turns_page() {
             id: "thr_123".to_string(),
             session_id: "thr_123".to_string(),
             forked_from_id: None,
+            parent_thread_id: None,
             preview: String::new(),
             ephemeral: false,
             model_provider: "openai".to_string(),
@@ -399,6 +424,7 @@ fn permissions_request_approval_uses_request_permission_profile() {
         "threadId": "thr_123",
         "turnId": "turn_123",
         "itemId": "call_123",
+        "environmentId": "remote",
         "startedAtMs": 1,
         "cwd": absolute_path_string("repo"),
         "reason": "Select a workspace root",
@@ -415,6 +441,7 @@ fn permissions_request_approval_uses_request_permission_profile() {
     .expect("permissions request should deserialize");
 
     assert_eq!(params.cwd, absolute_path("repo"));
+    assert_eq!(params.environment_id.as_deref(), Some("remote"));
     assert_eq!(
         params.permissions,
         RequestPermissionProfile {
@@ -1671,7 +1698,8 @@ fn config_requirements_granular_allowed_approval_policy_is_marked_experimental()
             allowed_approvals_reviewers: None,
             allowed_sandbox_modes: None,
             allowed_windows_sandbox_implementations: None,
-            allowed_permissions: None,
+            allowed_permission_profiles: None,
+            default_permissions: None,
             allowed_web_search_modes: None,
             allow_managed_hooks_only: None,
             allow_appshots: None,
@@ -2032,6 +2060,33 @@ fn mcp_server_status_serializes_absent_server_info_as_null() {
                 "authStatus": "unsupported",
             }],
             "nextCursor": null,
+        })
+    );
+}
+
+#[test]
+fn mcp_server_status_updated_accepts_missing_thread_id() {
+    let notification: McpServerStatusUpdatedNotification = serde_json::from_value(json!({
+        "name": "optional_broken",
+        "status": "failed",
+        "error": "handshake failed",
+    }))
+    .expect("notification without threadId should deserialize");
+
+    let expected = McpServerStatusUpdatedNotification {
+        thread_id: None,
+        name: "optional_broken".to_string(),
+        status: McpServerStartupState::Failed,
+        error: Some("handshake failed".to_string()),
+    };
+    assert_eq!(notification, expected);
+    assert_eq!(
+        serde_json::to_value(notification).expect("notification should serialize"),
+        json!({
+            "threadId": null,
+            "name": "optional_broken",
+            "status": "failed",
+            "error": "handshake failed",
         })
     );
 }
@@ -3581,6 +3636,7 @@ fn thread_lifecycle_responses_default_missing_optional_fields() {
     let fork: ThreadForkResponse = serde_json::from_value(response).expect("thread/fork response");
 
     assert_eq!(start.instruction_sources, Vec::<AbsolutePathBuf>::new());
+    assert_eq!(start.thread.parent_thread_id, None);
     assert_eq!(resume.instruction_sources, Vec::<AbsolutePathBuf>::new());
     assert_eq!(fork.instruction_sources, Vec::<AbsolutePathBuf>::new());
     assert_eq!(start.active_permission_profile, None);
