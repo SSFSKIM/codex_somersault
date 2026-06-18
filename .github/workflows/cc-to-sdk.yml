@@ -16,6 +16,10 @@ concurrency:
   group: cc-to-sdk-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: this gate only reads the tree (no token use, no uploads).
+permissions:
+  contents: read
+
 jobs:
   harness:
     name: harness (node ${{ matrix.node }})
