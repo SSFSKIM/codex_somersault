@@ -182,6 +182,7 @@ impl ChatWidget {
             forked_from: None,
             interrupted_turn_notice_mode: InterruptedTurnNoticeMode::Default,
             input_queue: InputQueueState::default(),
+            cancel_edit: CancelEditState::default(),
             chat_keymap,
             queued_message_edit_hint_binding,
             show_welcome_banner: is_first_run,
@@ -250,13 +251,12 @@ impl ChatWidget {
             .bottom_pane
             .set_queued_message_edit_binding(widget.queued_message_edit_hint_binding);
         #[cfg(target_os = "windows")]
-        widget.bottom_pane.set_windows_degraded_sandbox_active(
-            crate::legacy_core::windows_sandbox::ELEVATED_SANDBOX_NUX_ENABLED
-                && matches!(
-                    WindowsSandboxLevel::from_config(&widget.config),
-                    WindowsSandboxLevel::RestrictedToken
-                ),
-        );
+        widget
+            .bottom_pane
+            .set_windows_degraded_sandbox_active(matches!(
+                crate::windows_sandbox::level_from_config(&widget.config),
+                WindowsSandboxLevel::RestrictedToken
+            ));
         widget.update_collaboration_mode_indicator();
 
         widget

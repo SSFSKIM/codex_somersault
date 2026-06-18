@@ -58,13 +58,8 @@ use crate::bottom_pane::TerminalTitleItem;
 use crate::bottom_pane::TerminalTitleSetupView;
 use crate::diff_model::FileChange;
 use crate::git_action_directives::parse_assistant_markdown;
-use crate::legacy_core::DEFAULT_AGENTS_MD_FILENAME;
 use crate::legacy_core::config::Config;
-use crate::legacy_core::config::Constrained;
-use crate::legacy_core::config::ConstraintResult;
 use crate::legacy_core::config::PermissionProfileSnapshot;
-#[cfg(any(target_os = "windows", test))]
-use crate::legacy_core::windows_sandbox::WindowsSandboxLevelExt;
 use crate::mention_codec::LinkedMention;
 use crate::mention_codec::encode_history_mentions;
 use crate::model_catalog::ModelCatalog;
@@ -127,6 +122,8 @@ use codex_app_server_protocol::TurnPlanStepStatus;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput;
 use codex_config::ConfigLayerStackOrdering;
+use codex_config::Constrained;
+use codex_config::ConstraintResult;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::Notifications;
 use codex_config::types::WindowsSandboxModeToml;
@@ -257,11 +254,16 @@ fn queued_message_edit_hint_binding(
         .or_else(|| bindings.first().copied())
 }
 
+fn normalize_thread_name(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
 use crate::app_event::AppEvent;
 use crate::app_event::ExitMode;
 use crate::app_event::PermissionProfileSelection;
 use crate::app_event::RateLimitRefreshOrigin;
-#[cfg(any(target_os = "windows", test))]
+#[cfg(target_os = "windows")]
 use crate::app_event::WindowsSandboxEnableMode;
 use crate::app_event_sender::AppEventSender;
 use crate::auto_review_denials;
@@ -644,6 +646,7 @@ pub(crate) struct ChatWidget {
     // order.
     suppress_initial_user_message_submit: bool,
     input_queue: InputQueueState,
+    cancel_edit: CancelEditState,
     /// Main chat-surface bindings resolved from `tui.keymap.chat`.
     chat_keymap: ChatKeymap,
     /// Keybinding to show for popping the most-recently queued message back
@@ -757,6 +760,13 @@ pub(crate) enum InterruptedTurnNoticeMode {
     Suppress,
 }
 
+#[derive(Debug, Default)]
+struct CancelEditState {
+    prompt: Option<UserMessage>,
+    eligible: bool,
+    armed: bool,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ReplayKind {
     ResumeInitialMessages,
@@ -856,6 +866,7 @@ fn request_permissions_from_params(
     RequestPermissionsEvent {
         turn_id: params.turn_id,
         call_id: params.item_id,
+        environment_id: params.environment_id,
         started_at_ms: params.started_at_ms,
         reason: params.reason,
         permissions: params.permissions.into(),
@@ -1181,6 +1192,9 @@ impl ChatWidget {
     }
 
     fn add_boxed_history(&mut self, cell: Box<dyn HistoryCell>) {
+        if self.turn_lifecycle.agent_turn_running && !cell.display_lines(u16::MAX).is_empty() {
+            self.record_visible_turn_activity();
+        }
         // Keep the placeholder session header as the active cell until real session info arrives,
         // so we can merge headers instead of committing a duplicate box to history.
         let keep_placeholder_header_active = !self.is_session_configured()
@@ -1799,7 +1813,12 @@ impl ChatWidget {
     }
 
     pub(crate) fn prepare_local_op_submission(&mut self, op: &AppCommand) {
-        if matches!(op, AppCommand::Interrupt) && self.turn_lifecycle.agent_turn_running {
+        if let AppCommand::Interrupt { behavior } = op
+            && self.turn_lifecycle.agent_turn_running
+        {
+            if *behavior == crate::app_command::InterruptBehavior::RestorePromptIfNoOutput {
+                self.arm_cancel_edit();
+            }
             if let Some(controller) = self.stream_controller.as_mut() {
                 controller.clear_queue();
             }
