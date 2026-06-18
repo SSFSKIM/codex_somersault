@@ -1,0 +1,58 @@
+name: cc-to-sdk
+
+on:
+  pull_request:
+    paths:
+      - 'CC-to-SDK/**'
+      - '.github/workflows/cc-to-sdk.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'CC-to-SDK/**'
+      - '.github/workflows/cc-to-sdk.yml'
+
+# Cancel superseded runs on the same ref (avoids stacked runs on rapid pushes).
+concurrency:
+  group: cc-to-sdk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harness:
+    name: harness (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 22]
+    defaults:
+      run:
+        working-directory: CC-to-SDK/harness
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: CC-to-SDK/harness/package-lock.json
+
+      - name: Install (clean, from lockfile)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Unit tests (keyless)
+        run: npm run test:unit
+
+      - name: Verify package (release gate)
+        run: npm run verify:pack
