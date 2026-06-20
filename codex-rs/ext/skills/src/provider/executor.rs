@@ -76,13 +76,17 @@ impl SkillProvider for ExecutorSkillProvider {
                 };
                 let file_system = environment.get_filesystem();
                 let outcome = filter_skill_load_outcome_for_product(
-                    load_skills_from_roots([SkillRoot {
-                        path: root_path.clone(),
-                        scope: SkillScope::User,
-                        file_system: Arc::clone(&file_system),
-                        plugin_id: None,
-                        plugin_root: None,
-                    }])
+                    load_skills_from_roots(
+                        [SkillRoot {
+                            path: root_path.clone(),
+                            scope: SkillScope::User,
+                            file_system: Arc::clone(&file_system),
+                            plugin_id: None,
+                            plugin_namespace: None,
+                            plugin_root: None,
+                        }],
+                        /*plugin_skill_snapshots*/ None,
+                    )
                     .await,
                     self.restriction_product,
                 );
@@ -131,12 +135,7 @@ impl SkillProvider for ExecutorSkillProvider {
                     "executor skill resource references unavailable environment `{environment_id}`"
                 )));
             };
-            let resource_path = PathUri::from_abs_path(resource_path).map_err(|err| {
-                SkillProviderError::new(format!(
-                    "failed to read executor skill resource {}: {err}",
-                    request.resource.as_str()
-                ))
-            })?;
+            let resource_path = PathUri::from_abs_path(resource_path);
             let contents = environment
                 .get_filesystem()
                 .read_file_text(&resource_path, /*sandbox*/ None)

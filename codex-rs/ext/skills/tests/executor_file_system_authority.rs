@@ -3,16 +3,16 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
-use async_trait::async_trait;
-use codex_core_skills::HostLoadedSkills;
+use codex_core_skills::HostSkillsSnapshot;
 use codex_core_skills::loader::SkillRoot;
 use codex_core_skills::loader::load_skills_from_roots;
 use codex_exec_server::CopyOptions;
 use codex_exec_server::CreateDirectoryOptions;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecutorFileSystem;
+use codex_exec_server::ExecutorFileSystemFuture;
 use codex_exec_server::FileMetadata;
-use codex_exec_server::FileSystemResult;
+use codex_exec_server::FileSystemReadStream;
 use codex_exec_server::FileSystemSandboxContext;
 use codex_exec_server::ReadDirectoryEntry;
 use codex_exec_server::RemoveOptions;
@@ -36,46 +36,16 @@ struct SyntheticFileSystem {
 }
 
 impl SyntheticFileSystem {
-    fn metadata(&self, path: &AbsolutePathBuf) -> io::Result<FileMetadata> {
-        let skill_dir = self.canonical_root.join("skill");
-        let skill_path = skill_dir.join("SKILL.md");
-        let (is_directory, is_file) = if path == &self.canonical_root || path == &skill_dir {
-            (true, false)
-        } else if path == &skill_path {
-            (false, true)
-        } else {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "not found"));
-        };
-        Ok(FileMetadata {
-            is_directory,
-            is_file,
-            is_symlink: false,
-            created_at_ms: 0,
-            modified_at_ms: 0,
-        })
-    }
-}
-
-#[async_trait]
-impl ExecutorFileSystem for SyntheticFileSystem {
-    async fn canonicalize(
-        &self,
-        path: &PathUri,
-        _sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<PathUri> {
+    async fn canonicalize(&self, path: &PathUri) -> io::Result<PathUri> {
         let path = path.to_abs_path()?;
         if path == self.alias_root {
-            return PathUri::from_abs_path(&self.canonical_root);
+            return Ok(PathUri::from_abs_path(&self.canonical_root));
         }
         self.metadata(&path)?;
-        PathUri::from_abs_path(&path)
+        Ok(PathUri::from_abs_path(&path))
     }
 
-    async fn read_file(
-        &self,
-        path: &PathUri,
-        _sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<Vec<u8>> {
+    async fn read_file(&self, path: &PathUri) -> io::Result<Vec<u8>> {
         if path.to_abs_path()? == self.canonical_root.join("skill/SKILL.md") {
             Ok(SKILL_CONTENTS.as_bytes().to_vec())
         } else {
@@ -83,37 +53,7 @@ impl ExecutorFileSystem for SyntheticFileSystem {
         }
     }
 
-    async fn write_file(
-        &self,
-        _path: &PathUri,
-        _contents: Vec<u8>,
-        _sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "read only"))
-    }
-
-    async fn create_directory(
-        &self,
-        _path: &PathUri,
-        _options: CreateDirectoryOptions,
-        _sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "read only"))
-    }
-
-    async fn get_metadata(
-        &self,
-        path: &PathUri,
-        _sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<FileMetadata> {
-        self.metadata(&path.to_abs_path()?)
-    }
-
-    async fn read_directory(
-        &self,
-        path: &PathUri,
-        _sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<Vec<ReadDirectoryEntry>> {
+    async fn read_directory(&self, path: &PathUri) -> io::Result<Vec<ReadDirectoryEntry>> {
         let path = path.to_abs_path()?;
         if path == self.canonical_root {
             Ok(vec![ReadDirectoryEntry {
@@ -132,23 +72,108 @@ impl ExecutorFileSystem for SyntheticFileSystem {
         }
     }
 
-    async fn remove(
-        &self,
-        _path: &PathUri,
-        _options: RemoveOptions,
-        _sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "read only"))
+    fn metadata(&self, path: &AbsolutePathBuf) -> io::Result<FileMetadata> {
+        let skill_dir = self.canonical_root.join("skill");
+        let skill_path = skill_dir.join("SKILL.md");
+        let (is_directory, is_file) = if path == &self.canonical_root || path == &skill_dir {
+            (true, false)
+        } else if path == &skill_path {
+            (false, true)
+        } else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "not found"));
+        };
+        Ok(FileMetadata {
+            is_directory,
+            is_file,
+            is_symlink: false,
+            size: 0,
+            created_at_ms: 0,
+            modified_at_ms: 0,
+        })
+    }
+}
+
+impl ExecutorFileSystem for SyntheticFileSystem {
+    fn canonicalize<'a>(
+        &'a self,
+        path: &'a PathUri,
+        _sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> ExecutorFileSystemFuture<'a, PathUri> {
+        Box::pin(SyntheticFileSystem::canonicalize(self, path))
     }
 
-    async fn copy(
-        &self,
-        _source_path: &PathUri,
-        _destination_path: &PathUri,
+    fn read_file<'a>(
+        &'a self,
+        path: &'a PathUri,
+        _sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> ExecutorFileSystemFuture<'a, Vec<u8>> {
+        Box::pin(SyntheticFileSystem::read_file(self, path))
+    }
+
+    fn read_file_stream<'a>(
+        &'a self,
+        _path: &'a PathUri,
+        _sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> ExecutorFileSystemFuture<'a, FileSystemReadStream> {
+        Box::pin(async {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "synthetic filesystem does not support streaming reads",
+            ))
+        })
+    }
+
+    fn write_file<'a>(
+        &'a self,
+        _path: &'a PathUri,
+        _contents: Vec<u8>,
+        _sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> ExecutorFileSystemFuture<'a, ()> {
+        Box::pin(async move { Err(io::Error::new(io::ErrorKind::Unsupported, "read only")) })
+    }
+
+    fn create_directory<'a>(
+        &'a self,
+        _path: &'a PathUri,
+        _options: CreateDirectoryOptions,
+        _sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> ExecutorFileSystemFuture<'a, ()> {
+        Box::pin(async move { Err(io::Error::new(io::ErrorKind::Unsupported, "read only")) })
+    }
+
+    fn get_metadata<'a>(
+        &'a self,
+        path: &'a PathUri,
+        _sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> ExecutorFileSystemFuture<'a, FileMetadata> {
+        Box::pin(async move { self.metadata(&path.to_abs_path()?) })
+    }
+
+    fn read_directory<'a>(
+        &'a self,
+        path: &'a PathUri,
+        _sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> ExecutorFileSystemFuture<'a, Vec<ReadDirectoryEntry>> {
+        Box::pin(SyntheticFileSystem::read_directory(self, path))
+    }
+
+    fn remove<'a>(
+        &'a self,
+        _path: &'a PathUri,
+        _options: RemoveOptions,
+        _sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> ExecutorFileSystemFuture<'a, ()> {
+        Box::pin(async move { Err(io::Error::new(io::ErrorKind::Unsupported, "read only")) })
+    }
+
+    fn copy<'a>(
+        &'a self,
+        _source_path: &'a PathUri,
+        _destination_path: &'a PathUri,
         _options: CopyOptions,
-        _sandbox: Option<&FileSystemSandboxContext>,
-    ) -> FileSystemResult<()> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "read only"))
+        _sandbox: Option<&'a FileSystemSandboxContext>,
+    ) -> ExecutorFileSystemFuture<'a, ()> {
+        Box::pin(async move { Err(io::Error::new(io::ErrorKind::Unsupported, "read only")) })
     }
 }
 
@@ -163,16 +188,20 @@ async fn skill_loading_and_reads_use_the_supplied_executor_file_system() {
     assert!(!alias_root.as_path().exists());
     assert!(!canonical_root.as_path().exists());
 
-    let outcome = load_skills_from_roots([SkillRoot {
-        path: alias_root.clone(),
-        scope: SkillScope::User,
-        file_system: Arc::new(SyntheticFileSystem {
-            alias_root,
-            canonical_root: canonical_root.clone(),
-        }),
-        plugin_id: None,
-        plugin_root: None,
-    }])
+    let outcome = load_skills_from_roots(
+        [SkillRoot {
+            path: alias_root.clone(),
+            scope: SkillScope::User,
+            file_system: Arc::new(SyntheticFileSystem {
+                alias_root,
+                canonical_root: canonical_root.clone(),
+            }),
+            plugin_id: None,
+            plugin_namespace: None,
+            plugin_root: None,
+        }],
+        /*plugin_skill_snapshots*/ None,
+    )
     .await;
     assert_eq!(outcome.errors, Vec::new());
     assert_eq!(outcome.skills.len(), 1);
@@ -183,7 +212,7 @@ async fn skill_loading_and_reads_use_the_supplied_executor_file_system() {
         skill.path_to_skills_md,
         canonical_root.join("skill/SKILL.md")
     );
-    let loaded = HostLoadedSkills::new(Arc::new(outcome));
+    let loaded = HostSkillsSnapshot::new(Arc::new(outcome));
     assert_eq!(
         loaded.read_skill_text(&skill).await.expect("skill body"),
         SKILL_CONTENTS
@@ -217,7 +246,7 @@ async fn selected_root_id_distinguishes_identical_executor_paths() {
                     },
                 })
                 .collect(),
-            host: None,
+            host_snapshot: None,
             include_host_skills: false,
             include_bundled_skills: true,
             include_orchestrator_skills: false,

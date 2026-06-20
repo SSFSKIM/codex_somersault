@@ -3,27 +3,29 @@ use std::io;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use codex_app_server_protocol::JSONRPCErrorError;
-use codex_utils_path_uri::PathUri;
 
 use crate::CopyOptions;
 use crate::CreateDirectoryOptions;
 use crate::ExecServerRuntimePaths;
 use crate::ExecutorFileSystem;
 use crate::RemoveOptions;
+use crate::file_read::FileReadHandleManager;
 use crate::local_file_system::LocalFileSystem;
 use crate::protocol::FS_WRITE_FILE_METHOD;
 use crate::protocol::FsCanonicalizeParams;
 use crate::protocol::FsCanonicalizeResponse;
+use crate::protocol::FsCloseParams;
+use crate::protocol::FsCloseResponse;
 use crate::protocol::FsCopyParams;
 use crate::protocol::FsCopyResponse;
 use crate::protocol::FsCreateDirectoryParams;
 use crate::protocol::FsCreateDirectoryResponse;
 use crate::protocol::FsGetMetadataParams;
 use crate::protocol::FsGetMetadataResponse;
-use crate::protocol::FsJoinParams;
-use crate::protocol::FsJoinResponse;
-use crate::protocol::FsParentParams;
-use crate::protocol::FsParentResponse;
+use crate::protocol::FsOpenParams;
+use crate::protocol::FsOpenResponse;
+use crate::protocol::FsReadBlockParams;
+use crate::protocol::FsReadBlockResponse;
 use crate::protocol::FsReadDirectoryEntry;
 use crate::protocol::FsReadDirectoryParams;
 use crate::protocol::FsReadDirectoryResponse;
@@ -37,26 +39,76 @@ use crate::rpc::internal_error;
 use crate::rpc::invalid_request;
 use crate::rpc::not_found;
 
+const MAX_FILE_READ_HANDLE_ID_BYTES: usize = 32;
+
 #[derive(Clone)]
 pub(crate) struct FileSystemHandler {
     file_system: LocalFileSystem,
+    file_reads: FileReadHandleManager,
 }
 
 impl FileSystemHandler {
     pub(crate) fn new(runtime_paths: ExecServerRuntimePaths) -> Self {
         Self {
             file_system: LocalFileSystem::with_runtime_paths(runtime_paths),
+            file_reads: FileReadHandleManager::default(),
         }
+    }
+
+    pub(crate) async fn shutdown(&self) {
+        self.file_reads.close_all().await;
+    }
+
+    pub(crate) async fn open(
+        &self,
+        params: FsOpenParams,
+    ) -> Result<FsOpenResponse, JSONRPCErrorError> {
+        validate_file_read_handle_id(&params.handle_id)?;
+        let file = self
+            .file_system
+            .open_file_for_read(&params.path, params.sandbox.as_ref())
+            .await
+            .map_err(map_fs_error)?;
+        let handle_id = self
+            .file_reads
+            .open(params.handle_id, file)
+            .await
+            .map_err(map_fs_error)?;
+        Ok(FsOpenResponse { handle_id })
+    }
+
+    pub(crate) async fn read_block(
+        &self,
+        params: FsReadBlockParams,
+    ) -> Result<FsReadBlockResponse, JSONRPCErrorError> {
+        validate_file_read_handle_id(&params.handle_id)?;
+        let block = self
+            .file_reads
+            .read_block(&params.handle_id, params.offset, params.len)
+            .await
+            .map_err(map_fs_error)?;
+        Ok(FsReadBlockResponse {
+            chunk: block.bytes.into(),
+            eof: block.eof,
+        })
+    }
+
+    pub(crate) async fn close(
+        &self,
+        params: FsCloseParams,
+    ) -> Result<FsCloseResponse, JSONRPCErrorError> {
+        validate_file_read_handle_id(&params.handle_id)?;
+        self.file_reads.close(&params.handle_id).await;
+        Ok(FsCloseResponse {})
     }
 
     pub(crate) async fn read_file(
         &self,
         params: FsReadFileParams,
     ) -> Result<FsReadFileResponse, JSONRPCErrorError> {
-        let path = PathUri::from_abs_path(&params.path).map_err(map_fs_error)?;
         let bytes = self
             .file_system
-            .read_file(&path, params.sandbox.as_ref())
+            .read_file(&params.path, params.sandbox.as_ref())
             .await
             .map_err(map_fs_error)?;
         Ok(FsReadFileResponse {
@@ -68,14 +120,13 @@ impl FileSystemHandler {
         &self,
         params: FsWriteFileParams,
     ) -> Result<FsWriteFileResponse, JSONRPCErrorError> {
-        let path = PathUri::from_abs_path(&params.path).map_err(map_fs_error)?;
         let bytes = STANDARD.decode(params.data_base64).map_err(|err| {
             invalid_request(format!(
                 "{FS_WRITE_FILE_METHOD} requires valid base64 dataBase64: {err}"
             ))
         })?;
         self.file_system
-            .write_file(&path, bytes, params.sandbox.as_ref())
+            .write_file(&params.path, bytes, params.sandbox.as_ref())
             .await
             .map_err(map_fs_error)?;
         Ok(FsWriteFileResponse {})
@@ -86,10 +137,9 @@ impl FileSystemHandler {
         params: FsCreateDirectoryParams,
     ) -> Result<FsCreateDirectoryResponse, JSONRPCErrorError> {
         let recursive = params.recursive.unwrap_or(true);
-        let path = PathUri::from_abs_path(&params.path).map_err(map_fs_error)?;
         self.file_system
             .create_directory(
-                &path,
+                &params.path,
                 CreateDirectoryOptions { recursive },
                 params.sandbox.as_ref(),
             )
@@ -102,16 +152,16 @@ impl FileSystemHandler {
         &self,
         params: FsGetMetadataParams,
     ) -> Result<FsGetMetadataResponse, JSONRPCErrorError> {
-        let path = PathUri::from_abs_path(&params.path).map_err(map_fs_error)?;
         let metadata = self
             .file_system
-            .get_metadata(&path, params.sandbox.as_ref())
+            .get_metadata(&params.path, params.sandbox.as_ref())
             .await
             .map_err(map_fs_error)?;
         Ok(FsGetMetadataResponse {
             is_directory: metadata.is_directory,
             is_file: metadata.is_file,
             is_symlink: metadata.is_symlink,
+            size: metadata.size,
             created_at_ms: metadata.created_at_ms,
             modified_at_ms: metadata.modified_at_ms,
         })
@@ -121,42 +171,21 @@ impl FileSystemHandler {
         &self,
         params: FsCanonicalizeParams,
     ) -> Result<FsCanonicalizeResponse, JSONRPCErrorError> {
-        let requested_path = PathUri::from_abs_path(&params.path).map_err(map_fs_error)?;
         let path = self
             .file_system
-            .canonicalize(&requested_path, params.sandbox.as_ref())
+            .canonicalize(&params.path, params.sandbox.as_ref())
             .await
             .map_err(map_fs_error)?;
-        let path = path.to_abs_path().map_err(map_fs_error)?;
         Ok(FsCanonicalizeResponse { path })
-    }
-
-    pub(crate) async fn join(
-        &self,
-        params: FsJoinParams,
-    ) -> Result<FsJoinResponse, JSONRPCErrorError> {
-        // TODO(anp): remove and migrate callers to PathUri.
-        let path = params.base_path.join(params.path);
-        Ok(FsJoinResponse { path })
-    }
-
-    pub(crate) async fn parent(
-        &self,
-        params: FsParentParams,
-    ) -> Result<FsParentResponse, JSONRPCErrorError> {
-        // TODO(anp): remove and migrate callers to PathUri.
-        let path = params.path.parent();
-        Ok(FsParentResponse { path })
     }
 
     pub(crate) async fn read_directory(
         &self,
         params: FsReadDirectoryParams,
     ) -> Result<FsReadDirectoryResponse, JSONRPCErrorError> {
-        let path = PathUri::from_abs_path(&params.path).map_err(map_fs_error)?;
         let entries = self
             .file_system
-            .read_directory(&path, params.sandbox.as_ref())
+            .read_directory(&params.path, params.sandbox.as_ref())
             .await
             .map_err(map_fs_error)?
             .into_iter()
@@ -175,10 +204,9 @@ impl FileSystemHandler {
     ) -> Result<FsRemoveResponse, JSONRPCErrorError> {
         let recursive = params.recursive.unwrap_or(true);
         let force = params.force.unwrap_or(true);
-        let path = PathUri::from_abs_path(&params.path).map_err(map_fs_error)?;
         self.file_system
             .remove(
-                &path,
+                &params.path,
                 RemoveOptions { recursive, force },
                 params.sandbox.as_ref(),
             )
@@ -191,13 +219,10 @@ impl FileSystemHandler {
         &self,
         params: FsCopyParams,
     ) -> Result<FsCopyResponse, JSONRPCErrorError> {
-        let source_path = PathUri::from_abs_path(&params.source_path).map_err(map_fs_error)?;
-        let destination_path =
-            PathUri::from_abs_path(&params.destination_path).map_err(map_fs_error)?;
         self.file_system
             .copy(
-                &source_path,
-                &destination_path,
+                &params.source_path,
+                &params.destination_path,
                 CopyOptions {
                     recursive: params.recursive,
                 },
@@ -207,6 +232,15 @@ impl FileSystemHandler {
             .map_err(map_fs_error)?;
         Ok(FsCopyResponse {})
     }
+}
+
+fn validate_file_read_handle_id(handle_id: &str) -> Result<(), JSONRPCErrorError> {
+    if handle_id.len() > MAX_FILE_READ_HANDLE_ID_BYTES {
+        return Err(invalid_request(format!(
+            "file read handle ID must not exceed {MAX_FILE_READ_HANDLE_ID_BYTES} bytes"
+        )));
+    }
+    Ok(())
 }
 
 fn map_fs_error(err: io::Error) -> JSONRPCErrorError {
@@ -223,7 +257,7 @@ fn map_fs_error(err: io::Error) -> JSONRPCErrorError {
 mod tests {
     use codex_protocol::protocol::NetworkAccess;
     use codex_protocol::protocol::SandboxPolicy;
-    use codex_utils_absolute_path::AbsolutePathBuf;
+    use codex_utils_path_uri::PathUri;
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -240,8 +274,14 @@ mod tests {
         )
         .expect("runtime paths");
         let handler = FileSystemHandler::new(runtime_paths);
-        let sandbox_cwd =
-            AbsolutePathBuf::from_absolute_path(temp_dir.path()).expect("absolute tempdir");
+        let sandbox_cwd = PathUri::from_path(temp_dir.path()).expect("tempdir URI");
+        let sandbox_context = |sandbox_policy| {
+            FileSystemSandboxContext::from_legacy_sandbox_policy(
+                sandbox_policy,
+                sandbox_cwd.clone(),
+            )
+            .expect("sandbox context")
+        };
 
         for (file_name, sandbox_policy) in [
             ("danger.txt", SandboxPolicy::DangerFullAccess),
@@ -252,18 +292,13 @@ mod tests {
                 },
             ),
         ] {
-            let path =
-                AbsolutePathBuf::from_absolute_path(temp_dir.path().join(file_name).as_path())
-                    .expect("absolute path");
+            let path = PathUri::from_path(temp_dir.path().join(file_name)).expect("path URI");
 
             handler
                 .write_file(FsWriteFileParams {
                     path: path.clone(),
                     data_base64: STANDARD.encode("ok"),
-                    sandbox: Some(FileSystemSandboxContext::from_legacy_sandbox_policy(
-                        sandbox_policy.clone(),
-                        sandbox_cwd.clone(),
-                    )),
+                    sandbox: Some(sandbox_context(sandbox_policy.clone())),
                 })
                 .await
                 .expect("write file");
@@ -271,63 +306,27 @@ mod tests {
             let canonicalized = handler
                 .canonicalize(FsCanonicalizeParams {
                     path: path.clone(),
-                    sandbox: Some(FileSystemSandboxContext::from_legacy_sandbox_policy(
-                        sandbox_policy.clone(),
-                        sandbox_cwd.clone(),
-                    )),
+                    sandbox: Some(sandbox_context(sandbox_policy.clone())),
                 })
                 .await
                 .expect("canonicalize file");
             assert_eq!(
                 canonicalized.path,
-                AbsolutePathBuf::from_absolute_path(
-                    std::fs::canonicalize(path.as_path()).expect("canonical path"),
+                PathUri::from_path(
+                    std::fs::canonicalize(temp_dir.path().join(file_name)).expect("canonical path"),
                 )
-                .expect("absolute canonical path"),
+                .expect("canonical path URI"),
             );
 
             let response = handler
                 .read_file(FsReadFileParams {
                     path,
-                    sandbox: Some(FileSystemSandboxContext::from_legacy_sandbox_policy(
-                        sandbox_policy,
-                        sandbox_cwd.clone(),
-                    )),
+                    sandbox: Some(sandbox_context(sandbox_policy)),
                 })
                 .await
                 .expect("read file");
 
             assert_eq!(response.data_base64, STANDARD.encode("ok"));
         }
-    }
-
-    #[tokio::test]
-    async fn protocol_join_and_parent_remain_native_path_operations() {
-        let temp_dir = tempfile::tempdir().expect("tempdir");
-        let runtime_paths = ExecServerRuntimePaths::new(
-            std::env::current_exe().expect("current exe"),
-            /*codex_linux_sandbox_exe*/ None,
-        )
-        .expect("runtime paths");
-        let handler = FileSystemHandler::new(runtime_paths);
-        let base_path =
-            AbsolutePathBuf::from_absolute_path(temp_dir.path()).expect("absolute tempdir");
-
-        let joined = handler
-            .join(FsJoinParams {
-                base_path: base_path.clone(),
-                path: "nested/file.txt".into(),
-            })
-            .await
-            .expect("join path");
-        assert_eq!(joined.path, base_path.join("nested/file.txt"));
-
-        let parent = handler
-            .parent(FsParentParams {
-                path: joined.path.clone(),
-            })
-            .await
-            .expect("parent path");
-        assert_eq!(parent.path, joined.path.parent());
     }
 }
