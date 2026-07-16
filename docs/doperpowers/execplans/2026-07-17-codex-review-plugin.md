@@ -14,9 +14,9 @@ The user's prime directive for this work: replicate the Codex native mechanism w
 
 - [x] (2026-07-16 19:40Z) Grill completed in-session: trigger posture (autonomous + on-request), verdict format (hybrid text), plugin home (new standalone repo) confirmed by the user.
 - [x] (2026-07-16 19:50Z) ExecPlan authored and committed to `docs/doperpowers/execplans/2026-07-17-codex-review-plugin.md` in the codex_somersault repo.
-- [ ] Milestone 1: scaffold the `codex-review` repo (git init, MIT license, manifests, README stub) on branch `build/initial-plugin`.
-- [ ] Milestone 2: author `agents/codex-reviewer.md` (rubric port); validate with fixture Test A (planted bug found, format exact).
-- [ ] Milestone 3: author `skills/codex-review/` (SKILL.md, resolve_target.sh, codex-parity.md); validate script against fixture.
+- [x] (2026-07-16 19:52Z) Milestone 1: scaffolded the `codex-review` repo (git init, MIT license, manifests, README stub) on branch `build/initial-plugin`; both manifests JSON-validated.
+- [x] (2026-07-16 20:05Z) Milestone 2: `agents/codex-reviewer.md` authored, committed, and validated — fixture Test A PASSED (planted off-by-one flagged as [P1] at calc.py:4-5 with a rubric-compliant suggestion block, plus a legitimate bonus [P2] IndexError-regression finding; Verdict block exact: "patch is incorrect", Confidence 0.98; util.py not flagged; main agent relayed verbatim). Transcript in Artifacts and Notes.
+- [x] (2026-07-16 19:58Z) Milestone 3: authored `skills/codex-review/` (SKILL.md, resolve_target.sh, codex-parity.md); resolve_target.sh unit-checked against the fixture (correct SHA; exit 1 on unknown branch).
 - [ ] Milestone 4: full validation matrix — Tests B through F (skill-path base review, uncommitted, commit, custom, no-bug control); complete README.
 - [ ] Milestone 5: exit gate — `codex exec review --base main` on the plugin repo, fix findings, merge to `main`, create and push `SSFSKIM/codex-review` on GitHub; write retrospective.
 
@@ -412,7 +412,28 @@ Every milestone is additive and re-runnable: the fixture script starts with `rm 
 
 ## Artifacts and Notes
 
-(Transcripts and evidence appended during execution.)
+Test A transcript (2026-07-16 20:05Z, `claude -p --plugin-dir ... --permission-mode bypassPermissions`, fixture branch `feature`, merge base 5161a24). The main agent's relayed output, abridged to the reviewer's two blocks:
+
+    ## Findings
+
+    [P1] Off-by-one: loop sums only the first n-1 items — /Users/new/tmp/codex-review-fixture/calc.py:4-5
+      `range(n - 1)` iterates over indices `0..n-2`, so the rewritten `sum_first_n` returns the sum of the
+      first `n - 1` items instead of the first `n`, contradicting the docstring and the previous
+      `sum(items[:n])` behavior. For example, `sum_first_n([1, 2, 3], 2)` now returns `1` instead of `3`.
+
+    [P2] IndexError regression when n exceeds the list length — /Users/new/tmp/codex-review-fixture/calc.py:4-5
+      The original `sum(items[:n])` tolerated `n` larger than `len(items)` ... the hand-rolled loop indexes
+      `items[i]` directly and raises `IndexError` once `i >= len(items)`.
+
+    ## Verdict
+
+    Overall correctness: patch is incorrect
+    Explanation: The rewritten loop in `sum_first_n` has an off-by-one (`range(n - 1)`) that makes it sum one
+    fewer item than documented, and it also newly raises `IndexError` when `n` exceeds the list length, both
+    regressions from the original slicing implementation.
+    Confidence: 0.98
+
+Both findings are genuine regressions introduced by the fixture commit; the clean file `util.py` was not flagged. resolve_target.sh unit check (2026-07-16 19:58Z): printed 5161a241186942fe995ea29afa98647cda4c26c6, matching `git merge-base HEAD main`; unknown branch exits 1 with "error: cannot resolve branch".
 
 ## Interfaces and Dependencies
 
