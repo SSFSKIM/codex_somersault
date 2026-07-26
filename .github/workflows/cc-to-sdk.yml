@@ -58,5 +58,8 @@ jobs:
       - name: Unit tests (keyless)
         run: npm run test:unit
 
+      - name: Integration tests (keyless)
+        run: npm run test:integration
+
       - name: Verify package (release gate)
         run: npm run verify:pack
