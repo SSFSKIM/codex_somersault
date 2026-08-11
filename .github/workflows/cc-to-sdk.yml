@@ -24,7 +24,8 @@ jobs:
   harness:
     name: harness (node ${{ matrix.node }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 15, not 10: the node-22 leg additionally runs the tmux resize matrix (~2 min of real terminal driving).
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -63,3 +64,26 @@ jobs:
 
       - name: Verify package (release gate)
         run: npm run verify:pack
+
+      # ── the QA-2 width matrix (Wave R A12) ────────────────────────────────────────────────────────────
+      # ONE Node version is enough, and it is the newer one. This step tests what the BUILT binary writes to
+      # a real terminal across a SIGWINCH — emulator behaviour, not Node API surface — so running it twice
+      # would buy nothing and cost ~2 minutes.
+      #
+      # tmux is NOT in the ubuntu-latest image's package list, so it is installed rather than assumed; the
+      # `command -v` guard just makes the step free if a future image starts shipping it.
+      - name: Install tmux (for the resize matrix)
+        if: matrix.node == 22
+        run: command -v tmux >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y tmux; }
+
+      # `RESIZE_MATRIX_REQUIRE_TMUX=1` turns the script's "no tmux → SKIP, exit 0" escape hatch into a hard
+      # failure. That escape hatch exists for a developer laptop without tmux; in CI a permanently-skipping
+      # step is a decorative net, which is the exact failure mode this matrix was written to replace.
+      #
+      # The name deliberately does NOT start with `CI_`: Ink's `is-in-ci` counts any `CI_*` variable as a CI
+      # environment, and under that flag Ink never subscribes to `resize` and emits static output only — it
+      # would switch off the exact rendering this step measures. For the same reason the script gives each
+      # ccx child `CI=false` (this job runs with the runner's own `CI=true`); see its `launch` comment.
+      - name: Resize matrix (tmux, keyless)
+        if: matrix.node == 22
+        run: RESIZE_MATRIX_REQUIRE_TMUX=1 npm run test:resize-matrix
