@@ -44,6 +44,9 @@ pub(crate) struct Session {
     pub(super) tx_event: Sender<Event>,
     pub(super) agent_status: watch::Sender<AgentStatus>,
     pub(super) state: Mutex<SessionState>,
+    /// Orders accepted settings commits and their persisted events with compaction checkpoints.
+    /// Keep this separate from `state` so storage I/O does not block runtime state access.
+    pub(super) thread_settings_persistence: Semaphore,
     /// Serializes rebuild/apply cycles for the running proxy; each cycle
     /// rebuilds from the current SessionState while holding this lock.
     pub(super) managed_network_proxy_refresh_lock: Semaphore,
@@ -609,6 +612,12 @@ impl Session {
         CodexResponsesMetadata {
             window_number: Some(window_number),
             context_window_id: Some(context_window_id),
+            history_ingest_requested: turn_context
+                .config
+                .token_budget
+                .as_ref()
+                .is_some_and(|config| config.use_history_notes_extension)
+                .then_some(true),
             forked_from_ordinal_exclusive: self
                 .forked_from_ordinal_exclusive
                 .filter(|_| responses_metadata.forked_from_thread_id.is_some()),
@@ -1469,6 +1478,7 @@ impl Session {
                 tx_event: tx_event.clone(),
                 agent_status,
                 state: Mutex::new(state),
+                thread_settings_persistence: Semaphore::new(/*permits*/ 1),
                 managed_network_proxy_refresh_lock: Semaphore::new(/*permits*/ 1),
                 features: config.features.clone(),
                 windows_sandbox_proxy_settings_mode,
@@ -1569,7 +1579,7 @@ impl Session {
             )
             .await?;
             sess.start_mcp_prewarm_worker(mcp_prewarm_rx, mcp_auth_changes);
-            sess.schedule_startup_prewarm(session_configuration.base_instructions.clone())
+            sess.schedule_startup_prewarm(sess.get_prompt_base_instructions().await.text)
                 .await;
             let session_start_source = match &initial_history {
                 InitialHistory::Resumed(_) => codex_hooks::SessionStartSource::Resume,
